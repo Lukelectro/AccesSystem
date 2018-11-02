@@ -1,7 +1,7 @@
 // https://wiki.makerspaceleiden.nl/mediawiki/index.php/Powernode_1.1
 //
 #define AART_LED        (GPIO_NUM_16)
-#define RELAY           (GPIO_NUM_5)
+//#define RELAY           (GPIO_NUM_5) // commented out because that ticking noise is... noisy
 #define TRIAC           (GPIO_NUM_4)
 //#define CURRENT_COIL    (GPIO_NUM_36) // New IO
 #define CURRENT_COIL    (GPIO_NUM_15) // the one that collides with the card reader
@@ -11,10 +11,13 @@
 #define OPTO2           (GPIO_NUM_35)
 
 const int MAINSFREQ = 50;
-const float WINDOW = 20.0, INTERCEPT = -0.8 , SLOPE = 1; // Intercept and slope should be calibrated, see //https://www.instructables.com/id/Simplified-Arduino-AC-Current-Measurement-Using-AC/ 
-
-#include <RunningStatistics.h> ; //https://www.instructables.com/id/Simplified-Arduino-AC-Current-Measurement-Using-AC/ but slightly improved uppon by using const instead of variables for things that should be const
-// Even when not using Filters.h it fails to compile because there is no analog.Write on ESP32, even though analog.Write is not actualy used but it is in the code of FilterTwoPole::test();
+const int MAINSPERIOD = 1000/MAINSFREQ; // in miliseconds, not seconds, hence the 1000
+const int NCYCLES = 1;                 // number of cycles to calculate Irms over.
+const int TRIM = -208; // Check DC offset in ADC counts and correct it here so raw - DC_OFFSET is zero
+const int ADCMAX = 1<<12; // 12 bit ADC on ESP32
+const float VCC = 3.31, RLOAD=49.9;
+const int CURTRANS = 1000; // current transformer transfer ratio
+const int DC_OFFSET = 0.5*ADCMAX+TRIM;
 
 
 void setup() {
@@ -26,7 +29,11 @@ void setup() {
   Serial.println(__DATE__ " " __TIME__);
 
   pinMode(AART_LED, OUTPUT);
-  pinMode(RELAY, OUTPUT);
+  #ifdef RELAY{
+    pinMode(RELAY, OUTPUT);
+  }
+  #endif
+ 
   pinMode(TRIAC, OUTPUT);
   pinMode(CURRENT_COIL, ANALOG); // analog
 
@@ -73,24 +80,32 @@ void loop() {
 #endif
 
 #ifdef CURRENT_COIL
-  {
-    RunningStatistics inputStats;                 // create statistics to look at the raw test signal
-    inputStats.setWindowSecs( WINDOW / MAINSFREQ );
-    
-    unsigned int x = analogRead(CURRENT_COIL);
-    inputStats.input(x);  // log to Stats function
-  
-    static double avg = x, savg = 0, savg2 = 0;
-    avg = (5000 * avg + x) / 5001;
-    savg = (savg * 299 + (avg - x)) / 300;
-    savg2 = (savg2 * 299 + savg * savg) / 300;
+  {  
+    static unsigned long lastCurrentMeasure = 0, window;
+    int Raw = analogRead(CURRENT_COIL); // making this unsigned causes problems with AC_i not going negative where it should.
+    static unsigned int numsamples = 0;
+    double AC_i = ((Raw - DC_OFFSET)*VCC*CURTRANS)/(ADCMAX*RLOAD); // instantaneous value / momentane waarde
+    /* 
+     Irms = sqrt( (AC_i*AC_i)_1 + (AC_i*AC_i)_2 + (AC_i*AC_i)_3 + ... + (AC_i*AC_i)_n / n )    
+     Irms = sqrt(AC_i*AC_i)_1 + sqrt(AC_i*AC_i)_2 + sqrt(AC_i*AC_i)_3 + ... + sqrt(AC_i*AC_i)_n / sqrt(n);
+     Irms = ( abs(AC_i_1) + abs(AC_i_2) + ... + abs(AC_i_n) ) / sqrt(n);
+     Irms = abs(AC_i_1)/ sqrt(n); + abs(AC_i_2)/ sqrt(n); + .../ sqrt(n); + abs(AC_i_n) / sqrt(n);
 
-    static unsigned long lastCurrentMeasure = 0;
-    float Sigma = inputStats.sigma();
-    if (millis() - lastCurrentMeasure > 1000) {
-      Serial.printf("Current %f -> %f\n", avg / 1024., (savg2 - savg * savg) / 1024.);
-      // convert signal sigma value to current in amps: current_amps = intercept + slope * inputStats.sigma();
-      Serial.printf("I with Filters lib: sigma %f, Amps: %f\n", Sigma, INTERCEPT+SLOPE*Sigma );
+     Maar, n (numsamples) moet daarbij een geheel veelvoud zijn van samplerate/mainsfreq, omdat het alleen opgaat over een hele cyclus van het harmonische signaal en niet over een deel van de curve ervan
+    */
+    numsamples++;
+    static double Iabs_sum = 0 , Irms= 0;
+    Iabs_sum += abs(AC_i);
+    
+    if (millis() - window > (MAINSPERIOD*NCYCLES) ) { // hope milis() does not jitter too much...
+      Irms = Iabs_sum / sqrt(numsamples); // now it's a whole number of full cycles, calculate Irms
+      Iabs_sum = 0; // reset
+      numsamples = 0; // reset
+      window = millis();
+    };
+   
+    if (millis() - lastCurrentMeasure > 1000 ) {
+      Serial.printf("Current: Irms = %f A, Iabs_sum = %f , Iinst = %f, raw = %u, numsamples = %u\n", Irms, Iabs_sum, AC_i, Raw, numsamples);
       lastCurrentMeasure = millis();
     };
   }
