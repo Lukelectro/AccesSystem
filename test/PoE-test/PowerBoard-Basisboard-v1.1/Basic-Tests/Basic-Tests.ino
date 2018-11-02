@@ -12,10 +12,10 @@
 
 const int MAINSFREQ = 50;
 const int MAINSPERIOD = 1000/MAINSFREQ; // in miliseconds, not seconds, hence the 1000
-const int NCYCLES = 1;                 // number of cycles to calculate Irms over.
+const int NCYCLES = 100;                 // number of cycles to calculate Irms over.
 const int TRIM = -208; // Check DC offset in ADC counts and correct it here so raw - DC_OFFSET is zero
 const int ADCMAX = 1<<12; // 12 bit ADC on ESP32
-const float VCC = 3.31, RLOAD=49.9;
+const float VCC = 3.317, RLOAD=49.9;
 const int CURTRANS = 1000; // current transformer transfer ratio
 const int DC_OFFSET = 0.5*ADCMAX+TRIM;
 
@@ -98,14 +98,16 @@ void loop() {
     Iabs_sum += abs(AC_i);
     
     if (millis() - window > (MAINSPERIOD*NCYCLES) ) { // hope milis() does not jitter too much...
-      Irms = Iabs_sum / sqrt(numsamples); // now it's a whole number of full cycles, calculate Irms
+      //Irms = Iabs_sum / sqrt(numsamples); // now it's a whole number of full cycles, calculate Irms
+      Irms = Iabs_sum / numsamples; // let's try this, because that sqrt does not make sense, despite the definitions of rms.
       Iabs_sum = 0; // reset
       numsamples = 0; // reset
       window = millis();
     };
    
     if (millis() - lastCurrentMeasure > 1000 ) {
-      Serial.printf("Current: Irms = %f A, Iabs_sum = %f , Iinst = %f, raw = %u, numsamples = %u\n", Irms, Iabs_sum, AC_i, Raw, numsamples);
+     // Serial.printf("Current: Irms = %f A, Iabs_sum = %f , Iinst = %f, raw = %u, numsamples = %u\n", Irms, Iabs_sum, AC_i, Raw, numsamples);
+       Serial.printf("Current: Irms (or Iavg?) = %f A, raw = %u\n", Irms, Raw);
       lastCurrentMeasure = millis();
     };
   }
