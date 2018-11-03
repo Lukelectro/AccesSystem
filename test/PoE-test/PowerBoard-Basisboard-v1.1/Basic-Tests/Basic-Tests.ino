@@ -87,27 +87,33 @@ void loop() {
     double AC_i = ((Raw - DC_OFFSET)*VCC*CURTRANS)/(ADCMAX*RLOAD); // instantaneous value / momentane waarde
     /* 
      Irms = sqrt( (AC_i*AC_i)_1 + (AC_i*AC_i)_2 + (AC_i*AC_i)_3 + ... + (AC_i*AC_i)_n / n )    
-     Irms = sqrt(AC_i*AC_i)_1 + sqrt(AC_i*AC_i)_2 + sqrt(AC_i*AC_i)_3 + ... + sqrt(AC_i*AC_i)_n / sqrt(n);
+     
+     NO, WRONG! ->> Irms = sqrt(AC_i*AC_i)_1 + sqrt(AC_i*AC_i)_2 + sqrt(AC_i*AC_i)_3 + ... + sqrt(AC_i*AC_i)_n / sqrt(n);
+     so the rest of this is worng too. Will have to sum the squares with a huge risk of ovf (with this high and uncontrolled sample rate), or be happy with Iavg instead of Irms.
      Irms = ( abs(AC_i_1) + abs(AC_i_2) + ... + abs(AC_i_n) ) / sqrt(n);
      Irms = abs(AC_i_1)/ sqrt(n); + abs(AC_i_2)/ sqrt(n); + .../ sqrt(n); + abs(AC_i_n) / sqrt(n);
 
      Maar, n (numsamples) moet daarbij een geheel veelvoud zijn van samplerate/mainsfreq, omdat het alleen opgaat over een hele cyclus van het harmonische signaal en niet over een deel van de curve ervan
+     Numsamples still has to be "a full cycle" or a whole multiple of cycles, averaging just part of the curve wont work.
     */
     numsamples++;
-    static double Iabs_sum = 0 , Irms= 0;
+    static double Iabs_sum = 0, Iavg= 0, Irms=0;
+    static long double Isqrsum = 0;
     Iabs_sum += abs(AC_i);
+    Isqrsum += (AC_i*AC_i);
     
     if (millis() - window > (MAINSPERIOD*NCYCLES) ) { // hope milis() does not jitter too much...
-      //Irms = Iabs_sum / sqrt(numsamples); // now it's a whole number of full cycles, calculate Irms
-      Irms = Iabs_sum / numsamples; // let's try this, because that sqrt does not make sense, despite the definitions of rms.
+      Irms = sqrt(Isqrsum / numsamples); // now it's a whole number of full cycles, calculate Irms
+      Iavg= Iabs_sum / numsamples;
       Iabs_sum = 0; // reset
+      Isqrsum = 0;
       numsamples = 0; // reset
       window = millis();
     };
    
     if (millis() - lastCurrentMeasure > 1000 ) {
      // Serial.printf("Current: Irms = %f A, Iabs_sum = %f , Iinst = %f, raw = %u, numsamples = %u\n", Irms, Iabs_sum, AC_i, Raw, numsamples);
-       Serial.printf("Current: Irms (or Iavg?) = %f A, raw = %u\n", Irms, Raw);
+       Serial.printf("Current: Iavg = %f,  Irms (might ovf.) = %f A, raw = %u\n", Iavg, Irms, Raw);
       lastCurrentMeasure = millis();
     };
   }
